@@ -11,6 +11,10 @@ const config = {
     .map((server) => server.trim())
     .filter(Boolean),
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  corsOrigins: (process.env.CORS_ORIGIN || 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
   jwtSecret: process.env.JWT_SECRET || 'standarfood-dev-secret-change-me',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   defaultOwnerName: process.env.DEFAULT_OWNER_NAME || 'Store Owner',

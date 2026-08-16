@@ -30,7 +30,7 @@ const app = express();
 
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || config.corsOrigin === '*' || origin === config.corsOrigin || /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
+    if (!origin || config.corsOrigins.includes('*') || config.corsOrigins.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
       return callback(null, true);
     }
 
