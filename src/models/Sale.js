@@ -65,7 +65,7 @@ const saleOrderSchema = new mongoose.Schema(
 const salePaymentSchema = new mongoose.Schema(
   {
     id: { type: String, required: true },
-    method: { type: String, enum: ['CASH', 'QR', 'BANK_TRANSFER', 'CARD', 'OTHER'], required: true, default: 'CASH' },
+    method: { type: String, enum: ['CASH', 'QR', 'BANK_TRANSFER', 'CARD', 'OTHER', 'CREDIT'], required: true, default: 'CASH' },
     status: { type: String, enum: ['PENDING', 'PAID', 'PARTIAL', 'REFUNDED'], default: 'PAID' },
     amount: { type: Number, required: true, min: 0 },
     receivedAmount: { type: Number, default: 0, min: 0 },

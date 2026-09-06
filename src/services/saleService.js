@@ -1,4 +1,4 @@
-﻿const Customer = require('../models/Customer');
+const Customer = require('../models/Customer');
 const Order = require('../models/Order');
 const Payment = require('../models/Payment');
 const Sale = require('../models/Sale');
@@ -6,11 +6,15 @@ const inventoryService = require('./inventoryService');
 const productService = require('./productService');
 const recipeService = require('./recipeService');
 const shiftService = require('./shiftService');
-const { emitRealtimeEvent } = require('../realtime/socket');
+const { emitOrderEvent } = require('../realtime/socket');
 const { ApiError } = require('../utils/ApiError');
 
-const paymentMethods = ['CASH', 'QR', 'BANK_TRANSFER', 'CARD', 'OTHER'];
+const paymentMethods = ['CASH', 'QR', 'BANK_TRANSFER', 'CARD', 'OTHER', 'CREDIT'];
 const orderStatuses = ['NEW', 'CONFIRMED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED', 'CANCELLED'];
+
+function canManageKitchenOrders(user) {
+  return user.role === 'owner' || user.defaultRoute === '/kitchen';
+}
 
 function sanitizeUser(user) {
   return {
@@ -89,7 +93,8 @@ function calculateSummary(items, sourceSummary = {}) {
 function normalizePayment(sourcePayment = {}, summary) {
   const method = paymentMethods.includes(sourcePayment.method) ? sourcePayment.method : 'CASH';
   const amount = roundCurrency(summary.grandTotal);
-  const receivedAmount = method === 'CASH' ? roundCurrency(Number(sourcePayment.receivedAmount || amount)) : amount;
+  const status = method === 'CREDIT' ? 'PENDING' : 'PAID';
+  const receivedAmount = method === 'CREDIT' ? 0 : method === 'CASH' ? roundCurrency(Number(sourcePayment.receivedAmount || amount)) : amount;
 
   if (method === 'CASH' && receivedAmount < amount) {
     throw new ApiError(400, 'Received cash is less than total amount');
@@ -101,7 +106,7 @@ function normalizePayment(sourcePayment = {}, summary) {
     method,
     receivedAmount,
     reference: normalizeText(sourcePayment.reference),
-    status: 'PAID',
+    status,
   };
 }
 
@@ -193,7 +198,7 @@ async function createOrder(user, values) {
   });
 
   const mappedOrder = mapOrder(order);
-  emitRealtimeEvent('order:created', mappedOrder);
+  emitOrderEvent('order:created', mappedOrder);
   return mappedOrder;
 }
 
@@ -265,6 +270,11 @@ async function closeSale(user, values) {
   const cashier = sanitizeUser(user);
   const summary = calculateSummary(items, values.summary);
   const paymentValues = normalizePayment(values.payment, summary);
+
+  if (paymentValues.method === 'CREDIT' && !values.customerId) {
+    throw new ApiError(400, 'Customer is required for credit payment');
+  }
+
   const customer = await resolveCustomerSnapshot(values.customerId);
 
   const stockMovements = await productService.decreaseProductStock(items.map((item) => ({ productId: item.productId, quantity: item.quantity })));
@@ -279,7 +289,7 @@ async function closeSale(user, values) {
     order.customer = customer;
     order.items = items;
     order.summary = summary;
-    order.paymentStatus = 'PAID';
+    order.paymentStatus = paymentValues.status;
     order.status = 'COMPLETED';
     await order.save();
   } else {
@@ -290,7 +300,7 @@ async function closeSale(user, values) {
       note: normalizeText(values.orderNote),
       orderNumber: createOrderNumber(),
       orderType: values.orderType || 'DINE_IN',
-      paymentStatus: 'PAID',
+      paymentStatus: paymentValues.status,
       status: 'COMPLETED',
       summary,
       tableNumber: values.tableNumber,
@@ -330,17 +340,32 @@ async function closeSale(user, values) {
 
   payment.saleId = sale._id;
   await payment.save();
+
+  if (paymentValues.method === 'CREDIT') {
+    const creditCustomer = await Customer.findById(values.customerId);
+    if (!creditCustomer) throw new ApiError(404, 'Customer not found');
+    creditCustomer.creditBills.push({
+      amount: summary.grandTotal,
+      billNumber: order.orderNumber,
+      items: items.map((item) => ({ amount: item.price * item.quantity, title: item.name + ' x' + item.quantity })),
+      note: paymentValues.reference,
+      status: 'UNPAID',
+      title: 'Credit ' + order.orderNumber,
+    });
+    await creditCustomer.save();
+  }
+
   await inventoryService.recordSaleTransactions(cashier, stockMovements, sale._id);
   await recipeService.recordSaleConsumption(cashier, sale);
 
   const mappedOrder = mapOrder(order);
-  emitRealtimeEvent('order:updated', mappedOrder);
+  emitOrderEvent('order:updated', mappedOrder);
 
   return mapSale(sale);
 }
 
 async function listOrders(user) {
-  const filter = user.role === 'owner' ? {} : { 'employee.id': String(user._id || user.id) };
+  const filter = canManageKitchenOrders(user) ? {} : { 'employee.id': String(user._id || user.id) };
   const orders = await Order.find(filter).sort({ createdAt: -1 }).lean();
   return orders.map(mapOrder);
 }
@@ -350,7 +375,7 @@ async function updateOrderStatus(user, id, status) {
     throw new ApiError(400, 'Order status is invalid');
   }
 
-  const filter = user.role === 'owner' ? { _id: id } : { _id: id, 'employee.id': String(user._id || user.id) };
+  const filter = canManageKitchenOrders(user) ? { _id: id } : { _id: id, 'employee.id': String(user._id || user.id) };
   const order = await Order.findOne(filter);
 
   if (!order) {
@@ -375,7 +400,7 @@ async function updateOrderStatus(user, id, status) {
   );
 
   const mappedOrder = mapOrder(order);
-  emitRealtimeEvent('order:updated', mappedOrder);
+  emitOrderEvent('order:updated', mappedOrder);
   return mappedOrder;
 }
 
@@ -386,6 +411,8 @@ async function listPayments(user) {
 }
 
 module.exports = { closeSale, createOrder, importSale, listOrders, listPayments, listSales, updateOrderStatus };
+
+
 
 
 

@@ -1,4 +1,4 @@
-﻿const jwt = require('jsonwebtoken');
+const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { config } = require('../config/env');
 const { ApiError } = require('../utils/ApiError');
@@ -9,6 +9,7 @@ function sanitizeUser(user) {
     name: user.name,
     username: user.username,
     role: user.role,
+    defaultRoute: user.defaultRoute || '/pos',
     isActive: user.isActive,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,

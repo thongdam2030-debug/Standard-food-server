@@ -1,4 +1,4 @@
-﻿const User = require('../models/User');
+const User = require('../models/User');
 const { ApiError } = require('../utils/ApiError');
 const { createPagination, parsePagination } = require('../utils/pagination');
 const { sanitizeUser } = require('./authService');
@@ -32,6 +32,7 @@ async function createUser(values) {
     username: values.username.trim().toLowerCase(),
     passwordHash,
     role: values.role,
+    defaultRoute: values.defaultRoute || '/pos',
     isActive: values.isActive ?? true,
   });
 
@@ -49,6 +50,7 @@ async function updateUser(id, values, currentUserId) {
   user.name = values.name.trim();
   user.username = values.username.trim().toLowerCase();
   user.role = values.role;
+  user.defaultRoute = values.defaultRoute || '/pos';
 
   if (values.isActive !== undefined) {
     if (String(user._id) === String(currentUserId) && values.isActive === false) {

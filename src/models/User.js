@@ -1,4 +1,4 @@
-﻿const mongoose = require('mongoose');
+const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema(
@@ -24,6 +24,11 @@ const userSchema = new mongoose.Schema(
       enum: ['owner', 'cashier'],
       required: true,
       default: 'cashier',
+    },
+    defaultRoute: {
+      type: String,
+      enum: ['/pos', '/kitchen'],
+      default: '/pos',
     },
     isActive: {
       type: Boolean,
