@@ -2,24 +2,16 @@
 
 This setup runs only the POS API container. MongoDB is not included; set `MONGODB_URI` in `.env` to an existing MongoDB server.
 
-## Build locally
+## First deploy on Ubuntu server
 
-Run from the repository root:
-
-```sh
-docker build -t standarfood-pos-server:latest ./pos-server
-docker save standarfood-pos-server:latest | gzip > pos-server.tar.gz
-```
-
-Upload the image archive and compose file to the Ubuntu server:
+Run inside the `pos-server` folder on the server:
 
 ```sh
-scp pos-server.tar.gz user@server:/opt/pos-server/
-scp pos-server/docker-compose.yml user@server:/opt/pos-server/
-scp pos-server/.env.example user@server:/opt/pos-server/.env
+cd ~/Standard-food-server/pos-server
+cp .env.example .env
 ```
 
-Edit `/opt/pos-server/.env` on the server before starting:
+Edit `.env` before starting:
 
 ```env
 NODE_ENV=production
@@ -33,19 +25,15 @@ DEFAULT_OWNER_USERNAME=owner
 DEFAULT_OWNER_PASSWORD=change-this-password
 ```
 
-## Run on Ubuntu server
-
-Run on the Ubuntu server:
+Build and run on the server:
 
 ```sh
-cd /opt/pos-server
-gunzip -c pos-server.tar.gz | docker load
-docker compose up -d
+docker compose up -d --build
 docker compose ps
 docker compose logs -f pos-server
 ```
 
-The API is exposed on port `4000` by default. Change the host port with `POS_SERVER_PORT` in the server `.env` if needed:
+The API is exposed on port `4000` by default. Change the host port with `POS_SERVER_PORT` in `.env` if needed:
 
 ```env
 POS_SERVER_PORT=8080
@@ -53,19 +41,17 @@ POS_SERVER_PORT=8080
 
 ## Update deployment
 
-Build and upload a new archive from your local machine:
+After pushing new code to GitHub, pull and rebuild on the server:
 
 ```sh
-docker build -t standarfood-pos-server:latest ./pos-server
-docker save standarfood-pos-server:latest | gzip > pos-server.tar.gz
-scp pos-server.tar.gz user@server:/opt/pos-server/
+cd ~/Standard-food-server
+git pull
+cd pos-server
+docker compose up -d --build
 ```
 
-Then reload it on Ubuntu:
+Clean old unused Docker layers when disk space gets tight:
 
 ```sh
-cd /opt/pos-server
-docker compose down
-gunzip -c pos-server.tar.gz | docker load
-docker compose up -d
+docker image prune -f
 ```

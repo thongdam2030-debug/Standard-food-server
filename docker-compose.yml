@@ -1,5 +1,8 @@
 services:
   pos-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: ${POS_SERVER_IMAGE:-standarfood-pos-server:latest}
     container_name: standarfood-pos-server
     restart: unless-stopped
