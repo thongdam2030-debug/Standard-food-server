@@ -11,6 +11,11 @@ const orderItemSchema = new mongoose.Schema(
     size: { type: String, enum: ['small', 'regular', 'large'], default: 'regular' },
     specialInstructions: { type: [String], default: [] },
     note: { type: String, default: '' },
+    kitchenStatus: {
+      type: String,
+      enum: ['NEW', 'PREPARING', 'READY', 'SERVED', 'CANCELLED'],
+      default: 'NEW',
+    },
   },
   { _id: false },
 );
@@ -76,4 +81,3 @@ orderSchema.index({ 'employee.id': 1, createdAt: -1 });
 orderSchema.index({ 'customer.id': 1, createdAt: -1 });
 
 module.exports = mongoose.model('Order', orderSchema);
-

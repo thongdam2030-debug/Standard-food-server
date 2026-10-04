@@ -11,9 +11,10 @@ const { ApiError } = require('../utils/ApiError');
 
 const paymentMethods = ['CASH', 'QR', 'BANK_TRANSFER', 'CARD', 'OTHER', 'CREDIT'];
 const orderStatuses = ['NEW', 'CONFIRMED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED', 'CANCELLED'];
+const kitchenItemStatuses = ['NEW', 'PREPARING', 'READY', 'SERVED', 'CANCELLED'];
 
 function canManageKitchenOrders(user) {
-  return user.role === 'owner' || user.defaultRoute === '/kitchen';
+  return user.role === 'owner' || user.role === 'kitchen' || user.defaultRoute === '/kitchen';
 }
 
 function sanitizeUser(user) {
@@ -57,6 +58,36 @@ function normalizeText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function createKitchenItemKey(item) {
+  const instructionKey = Array.isArray(item.specialInstructions)
+    ? item.specialInstructions.map(normalizeText).filter(Boolean).join('|')
+    : '';
+  return [String(item.productId || ''), normalizeText(item.name).toLowerCase(), item.size || 'regular', instructionKey].join('::');
+}
+
+function createKitchenIndexedItemKey(item, index) {
+  return `${createKitchenItemKey(item)}::${index}`;
+}
+
+function getItemKitchenStatus(item, fallbackStatus = 'NEW') {
+  return kitchenItemStatuses.includes(item.kitchenStatus) ? item.kitchenStatus : fallbackStatus;
+}
+
+function getAggregateOrderStatus(items, fallbackStatus = 'NEW') {
+  const statuses = items.map((item) => getItemKitchenStatus(item, fallbackStatus));
+  if (statuses.length === 0) return fallbackStatus;
+  if (statuses.every((status) => status === 'CANCELLED')) return 'CANCELLED';
+  if (statuses.every((status) => status === 'SERVED' || status === 'CANCELLED')) return 'SERVED';
+  if (statuses.every((status) => ['READY', 'SERVED', 'CANCELLED'].includes(status))) return 'READY';
+  if (statuses.some((status) => status === 'PREPARING')) return 'PREPARING';
+  return 'NEW';
+}
+
+function getKitchenStatusFromOrderStatus(status) {
+  if (status === 'COMPLETED') return 'SERVED';
+  if (status === 'CONFIRMED') return 'NEW';
+  return kitchenItemStatuses.includes(status) ? status : 'NEW';
+}
 function normalizeSaleItems(items = []) {
   return items
     .map((item) => ({
@@ -64,6 +95,7 @@ function normalizeSaleItems(items = []) {
       price: Math.max(Number(item.price || 0), 0),
       quantity: Math.max(Number(item.quantity || 0), 0),
       specialInstructions: Array.isArray(item.specialInstructions) ? item.specialInstructions.map(normalizeText).filter(Boolean) : [],
+      kitchenStatus: kitchenItemStatuses.includes(item.kitchenStatus) ? item.kitchenStatus : 'NEW',
     }))
     .filter((item) => item.productId && item.quantity > 0);
 }
@@ -126,7 +158,11 @@ function mapOrder(order) {
     orderType: plainOrder.orderType,
     status: plainOrder.status,
     paymentStatus: plainOrder.paymentStatus,
-    items: plainOrder.items.map((item) => ({ ...item, productId: String(item.productId) })),
+    items: plainOrder.items.map((item) => ({
+      ...item,
+      kitchenStatus: getItemKitchenStatus(item, plainOrder.status),
+      productId: String(item.productId),
+    })),
     summary: plainOrder.summary,
     employee: plainOrder.employee,
     customer: plainOrder.customer,
@@ -204,6 +240,9 @@ async function createOrder(user, values) {
 
 async function importSale(user, values) {
   const items = normalizeSaleItems(values.items);
+  items.forEach((item) => {
+    item.kitchenStatus = 'SERVED';
+  });
   const cashier = values.cashier || sanitizeUser(user);
   const summary = calculateSummary(items, values.summary);
   const createdAt = values.createdAt ? new Date(values.createdAt) : new Date();
@@ -266,6 +305,9 @@ async function closeSale(user, values) {
   if (items.length === 0) {
     throw new ApiError(400, 'Sale items are required');
   }
+  items.forEach((item) => {
+    item.kitchenStatus = 'SERVED';
+  });
 
   const cashier = sanitizeUser(user);
   const summary = calculateSummary(items, values.summary);
@@ -383,6 +425,11 @@ async function updateOrderStatus(user, id, status) {
   }
 
   order.status = status;
+  const kitchenStatus = getKitchenStatusFromOrderStatus(status);
+  order.items.forEach((item) => {
+    item.kitchenStatus = kitchenStatus;
+  });
+  order.markModified('items');
   if (status === 'COMPLETED') {
     order.paymentStatus = 'PAID';
   }
@@ -404,24 +451,52 @@ async function updateOrderStatus(user, id, status) {
   return mappedOrder;
 }
 
+async function updateOrderItemStatus(user, id, itemKey, status) {
+  if (!kitchenItemStatuses.includes(status)) {
+    throw new ApiError(400, 'Order item status is invalid');
+  }
+
+  const filter = canManageKitchenOrders(user) ? { _id: id } : { _id: id, 'employee.id': String(user._id || user.id) };
+  const order = await Order.findOne(filter);
+
+  if (!order) {
+    throw new ApiError(404, 'Order not found');
+  }
+
+  let hasMatchingItem = false;
+  order.items.forEach((item, index) => {
+    if (createKitchenIndexedItemKey(item, index) === itemKey || createKitchenItemKey(item) === itemKey) {
+      item.kitchenStatus = status;
+      hasMatchingItem = true;
+    }
+  });
+
+  if (!hasMatchingItem) {
+    throw new ApiError(404, 'Order item not found');
+  }
+
+  order.status = getAggregateOrderStatus(order.items, order.status);
+  order.markModified('items');
+  await order.save();
+
+  await Sale.updateOne(
+    { 'order.id': String(order._id) },
+    {
+      $set: {
+        'order.status': order.status,
+        'order.paymentStatus': order.paymentStatus,
+      },
+    },
+  );
+
+  const mappedOrder = mapOrder(order);
+  emitOrderEvent('order:updated', mappedOrder);
+  return mappedOrder;
+}
 async function listPayments(user) {
   const filter = user.role === 'owner' ? {} : { 'cashier.id': String(user._id || user.id) };
   const payments = await Payment.find(filter).sort({ createdAt: -1 }).lean();
   return payments.map(mapPayment);
 }
 
-module.exports = { closeSale, createOrder, importSale, listOrders, listPayments, listSales, updateOrderStatus };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+module.exports = { closeSale, createOrder, importSale, listOrders, listPayments, listSales, updateOrderItemStatus, updateOrderStatus };

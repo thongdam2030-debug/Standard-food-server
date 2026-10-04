@@ -21,7 +21,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['owner', 'cashier'],
+      enum: ['owner', 'cashier', 'kitchen'],
       required: true,
       default: 'cashier',
     },

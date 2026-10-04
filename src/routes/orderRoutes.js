@@ -1,14 +1,13 @@
-﻿const express = require('express');
+const express = require('express');
 const saleController = require('../controllers/saleController');
 const { requireAuth, requireRole } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-router.use(requireAuth, requireRole('owner', 'cashier'));
+router.use(requireAuth, requireRole('owner', 'cashier', 'kitchen'));
 router.get('/', saleController.listOrders);
 router.post('/', saleController.createOrder);
 router.patch('/:id/status', saleController.updateOrderStatus);
+router.patch('/:id/items/status', saleController.updateOrderItemStatus);
 
 module.exports = router;
-
-

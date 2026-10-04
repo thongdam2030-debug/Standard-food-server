@@ -1,4 +1,5 @@
-﻿const Customer = require('../models/Customer');
+const Customer = require('../models/Customer');
+const Sale = require('../models/Sale');
 const { ApiError } = require('../utils/ApiError');
 const { createPagination, parsePagination } = require('../utils/pagination');
 const { escapeRegex, normalizeOptionalString } = require('../utils/strings');
@@ -36,6 +37,75 @@ function buildSort(query) {
   return { [sortBy]: sortOrder };
 }
 
+function getCustomerId(customer) {
+  return String(customer._id || customer.id || '');
+}
+
+function getRemainingDebt(customer) {
+  return (customer.creditBills || [])
+    .filter((bill) => bill.status === 'UNPAID')
+    .reduce((total, bill) => total + toNumber(bill.amount), 0);
+}
+
+function getActiveDepositSummary(customer) {
+  return (customer.depositedItems || [])
+    .filter((item) => item.status === 'ACTIVE')
+    .reduce(
+      (summary, item) => ({
+        count: summary.count + 1,
+        quantity: summary.quantity + toNumber(item.quantity),
+      }),
+      { count: 0, quantity: 0 },
+    );
+}
+
+async function attachCustomerSummaries(customers) {
+  if (!customers.length) return customers;
+
+  const customerIds = customers.map(getCustomerId).filter(Boolean);
+  const purchaseTotals = await Sale.aggregate([
+    { $match: { 'customer.id': { $in: customerIds } } },
+    {
+      $group: {
+        _id: '$customer.id',
+        billCount: { $sum: 1 },
+        totalPurchase: { $sum: '$summary.grandTotal' },
+      },
+    },
+  ]);
+  const purchasesByCustomerId = new Map(
+    purchaseTotals.map((purchaseTotal) => [
+      String(purchaseTotal._id),
+      {
+        billCount: toNumber(purchaseTotal.billCount),
+        totalPurchase: toNumber(purchaseTotal.totalPurchase),
+      },
+    ]),
+  );
+
+  return customers.map((customer) => {
+    const customerId = getCustomerId(customer);
+    const purchaseSummary = purchasesByCustomerId.get(customerId) || { billCount: 0, totalPurchase: 0 };
+    const activeDepositSummary = getActiveDepositSummary(customer);
+
+    return {
+      ...customer,
+      summary: {
+        activeDepositCount: activeDepositSummary.count,
+        activeDepositQuantity: activeDepositSummary.quantity,
+        billCount: purchaseSummary.billCount,
+        remainingDebt: getRemainingDebt(customer),
+        totalPurchase: purchaseSummary.totalPurchase,
+      },
+    };
+  });
+}
+
+async function attachCustomerSummary(customer) {
+  const [enrichedCustomer] = await attachCustomerSummaries([customer]);
+  return enrichedCustomer;
+}
+
 async function ensureUniquePhone(phone, ignoreId) {
   const normalizedPhone = normalizeOptionalString(phone);
 
@@ -64,8 +134,10 @@ async function listCustomers(query) {
     Customer.countDocuments(filter),
   ]);
 
+  const data = await attachCustomerSummaries(customers);
+
   return {
-    data: customers,
+    data,
     pagination: createPagination(page, limit, total),
   };
 }
@@ -77,7 +149,7 @@ async function getCustomerById(id) {
     throw new ApiError(404, 'Customer not found');
   }
 
-  return customer;
+  return attachCustomerSummary(customer);
 }
 
 async function createCustomer(values) {
@@ -90,7 +162,7 @@ async function createCustomer(values) {
     address: normalizeOptionalString(values.address),
   });
 
-  return customer.toObject();
+  return attachCustomerSummary(customer.toObject());
 }
 
 async function updateCustomer(id, values) {
@@ -108,7 +180,7 @@ async function updateCustomer(id, values) {
   customer.address = normalizeOptionalString(values.address);
 
   await customer.save();
-  return customer.toObject();
+  return attachCustomerSummary(customer.toObject());
 }
 
 
@@ -129,7 +201,7 @@ async function addCreditBill(id, values) {
   });
 
   await customer.save();
-  return customer.toObject();
+  return attachCustomerSummary(customer.toObject());
 }
 
 async function markCreditBillPaid(id, billId) {
@@ -142,7 +214,7 @@ async function markCreditBillPaid(id, billId) {
   bill.status = 'PAID';
   bill.paidAt = new Date();
   await customer.save();
-  return customer.toObject();
+  return attachCustomerSummary(customer.toObject());
 }
 
 async function addDepositedItem(id, values) {
@@ -157,7 +229,7 @@ async function addDepositedItem(id, values) {
   });
 
   await customer.save();
-  return customer.toObject();
+  return attachCustomerSummary(customer.toObject());
 }
 
 async function markDepositedItemReturned(id, itemId) {
@@ -170,7 +242,7 @@ async function markDepositedItemReturned(id, itemId) {
   item.status = 'RETURNED';
   item.returnedAt = new Date();
   await customer.save();
-  return customer.toObject();
+  return attachCustomerSummary(customer.toObject());
 }
 async function deleteCustomer(id) {
   const customer = await Customer.findById(id);
