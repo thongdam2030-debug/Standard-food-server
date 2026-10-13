@@ -1,4 +1,4 @@
-﻿const { body, query } = require('express-validator');
+const { body, query } = require('express-validator');
 const { handleValidation, paginationValidators, validateObjectId } = require('../middleware/validation');
 
 const productBodyValidators = [
@@ -17,7 +17,7 @@ const productBodyValidators = [
   body('price').isFloat({ min: 0 }).withMessage('price must be a number greater than or equal to 0'),
   body('cost').isFloat({ min: 0 }).withMessage('cost must be a number greater than or equal to 0'),
   body('stock').isFloat({ min: 0 }).withMessage('stock must be a number greater than or equal to 0'),
-  body('image').optional({ values: 'falsy' }).isString().trim().isLength({ max: 2000 }).withMessage('image must be 2000 characters or fewer'),
+  body('image').optional({ values: 'falsy' }).isString().trim().isLength({ max: 1000000 }).withMessage('image must be 1MB or fewer'),
   body('description').optional({ values: 'falsy' }).isString().trim().isLength({ max: 5000 }).withMessage('description must be 5000 characters or fewer'),
   body('isActive').optional().isBoolean().withMessage('isActive must be boolean'),
 ];

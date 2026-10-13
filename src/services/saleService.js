@@ -125,16 +125,22 @@ function calculateSummary(items, sourceSummary = {}) {
 function normalizePayment(sourcePayment = {}, summary) {
   const method = paymentMethods.includes(sourcePayment.method) ? sourcePayment.method : 'CASH';
   const amount = roundCurrency(summary.grandTotal);
-  const status = method === 'CREDIT' ? 'PENDING' : 'PAID';
-  const receivedAmount = method === 'CREDIT' ? 0 : method === 'CASH' ? roundCurrency(Number(sourcePayment.receivedAmount || amount)) : amount;
+  const creditAmount = method === 'CREDIT' ? Math.min(Math.max(roundCurrency(Number(sourcePayment.creditAmount || amount)), 0), amount) : 0;
+  const status = method === 'CREDIT' ? (creditAmount >= amount ? 'PENDING' : creditAmount > 0 ? 'PARTIAL' : 'PAID') : 'PAID';
+  const receivedAmount = method === 'CREDIT' ? amount - creditAmount : method === 'CASH' ? roundCurrency(Number(sourcePayment.receivedAmount || amount)) : amount;
 
   if (method === 'CASH' && receivedAmount < amount) {
     throw new ApiError(400, 'Received cash is less than total amount');
   }
 
+  if (method === 'CREDIT' && creditAmount <= 0) {
+    throw new ApiError(400, 'Credit amount must be greater than 0');
+  }
+
   return {
     amount,
     changeAmount: method === 'CASH' ? Math.max(receivedAmount - amount, 0) : 0,
+    creditAmount,
     method,
     receivedAmount,
     reference: normalizeText(sourcePayment.reference),
@@ -387,9 +393,9 @@ async function closeSale(user, values) {
     const creditCustomer = await Customer.findById(values.customerId);
     if (!creditCustomer) throw new ApiError(404, 'Customer not found');
     creditCustomer.creditBills.push({
-      amount: summary.grandTotal,
+      amount: paymentValues.creditAmount,
       billNumber: order.orderNumber,
-      items: items.map((item) => ({ amount: item.price * item.quantity, title: item.name + ' x' + item.quantity })),
+      items: [{ amount: paymentValues.creditAmount, title: 'ຍອດຕິດໜີ້ຈາກບິນ ' + order.orderNumber }],
       note: paymentValues.reference,
       status: 'UNPAID',
       title: 'Credit ' + order.orderNumber,
